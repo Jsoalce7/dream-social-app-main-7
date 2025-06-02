@@ -3,12 +3,19 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { UserProfile } from '@/types';
 
-export function useUserProfile(userId: string | null): UserProfile | null {
+export function useUserProfile(userId: string | null): {
+  userProfile: UserProfile | null;
+  loading: boolean;
+  error: Error | null;
+} {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (!userId) {
       setUserProfile(null);
+      setLoading(false);
       return;
     }
 
@@ -19,16 +26,18 @@ export function useUserProfile(userId: string | null): UserProfile | null {
         if (userDocSnap.exists()) {
           setUserProfile({ id: userDocSnap.id, ...userDocSnap.data() } as UserProfile);
         } else {
-          setUserProfile(null); // User profile not found
+          setUserProfile(null);
         }
-      } catch (error) {
-        console.error(`Error fetching user profile for ID ${userId}:`, error);
+      } catch (err) {
+        setError(err as Error);
         setUserProfile(null);
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchUserProfile();
-  }, [userId]); // Re-fetch if userId changes
+  }, [userId]);
 
-  return userProfile;
+  return { userProfile, loading, error };
 }

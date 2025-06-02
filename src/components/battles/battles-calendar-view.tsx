@@ -22,8 +22,8 @@ import { format, isToday, isTomorrow, isThisWeek, addWeeks } from 'date-fns';
 import { 
   Calendar as CalendarIcon, 
   Loader2,
+  DollarSign,
   Info,
-  DollarSign
 } from 'lucide-react'; 
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,6 +31,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Battle, BattleStatus, BattleMode } from '@/types';
 import { useInView } from 'react-intersection-observer';
+import BattleCard from '@/components/battles/battle-card'; // Import the BattleCard component
 
 // Constants
 const BATCH_SIZE = 10;
@@ -41,8 +42,9 @@ type BattleStatusVariant = 'default' | 'secondary' | 'destructive' | 'outline';
 const BATTLE_STATUS: Record<BattleStatus, { label: string; variant: BattleStatusVariant }> = {
   pending: { label: 'Pending', variant: 'secondary' },
   accepted: { label: 'Accepted', variant: 'default' },
-  completed: { label: 'Completed', variant: 'default' },
-  cancelled: { label: 'Cancelled', variant: 'destructive' }
+  declined: { label: 'Declined', variant: 'destructive' },
+  ongoing: { label: 'Ongoing', variant: 'default' },
+  completed: { label: 'Completed', variant: 'default' }
 };
 
 // Helper functions
@@ -70,8 +72,12 @@ const processBattleDoc = (doc: QueryDocumentSnapshot<DocumentData>): Battle => {
     creatorAName: data.creatorAName || 'Unknown',
     creatorBName: data.creatorBName || 'Unknown',
     creatorAAvatar: data.creatorAAvatar || '',
-    creatorBAvatar: data.creatorBAvatar || '',
-    dateTime: data.dateTime || data.scheduledTime || Timestamp.now(),
+    creatorBAvatar: data.creatorBAvatar || '',    // Ensure dateTime is always a Timestamp
+    dateTime: (data.dateTime instanceof Timestamp && data.dateTime)
+      ? data.dateTime
+      : (data.scheduledTime instanceof Timestamp && data.scheduledTime)
+        ? data.scheduledTime
+        : Timestamp.now(),
     status: (data.status as BattleStatus) || 'pending',
     mode: (data.mode as BattleMode) || 'Standard',
     participants: data.participants || [],
@@ -83,45 +89,8 @@ const processBattleDoc = (doc: QueryDocumentSnapshot<DocumentData>): Battle => {
     title: data.title || 'Untitled Battle',
     description: data.description || '',
     createdAt: data.createdAt?.toDate() || new Date(),
-    updatedAt: data.updatedAt?.toDate() || new Date(),
-    createdBy: data.createdBy || ''
+    updatedAt: data.updatedAt?.toDate() || new Date()
   };
-};
-
-// Battle card component
-const BattleCard = ({ battle }: { battle: Battle }) => {
-  const status = BATTLE_STATUS[battle.status];
-  
-  return (
-    <Card className="mb-4 hover:shadow-md transition-shadow">
-      <CardHeader className="pb-2">
-        <div className="flex justify-between items-start">
-          <CardTitle className="text-lg">{battle.title}</CardTitle>
-          <Badge variant={status.variant}>
-            {status.label}
-          </Badge>
-        </div>
-        <div className="flex items-center text-sm text-muted-foreground">
-          <CalendarIcon className="mr-1 h-4 w-4" />
-          <span>{formatBattleDate(battle.dateTime)} • {formatBattleTime(battle.dateTime)}</span>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {battle.description && (
-          <p className="text-sm text-muted-foreground mb-2">{battle.description}</p>
-        )}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <DollarSign className="h-4 w-4 mr-1 text-yellow-500" />
-            <span className="text-sm font-medium">${battle.prize} {battle.currency}</span>
-          </div>
-          <Button variant="outline" size="sm">
-            View Details
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
 };
 
 export default function BattlesCalendarView() {
@@ -153,6 +122,7 @@ export default function BattlesCalendarView() {
       // Query for upcoming battles (next 7 days)
       const upcomingQuery = query(
         battlesRef,
+ where('status', '==', 'accepted'),
         where('dateTime', '>=', now),
         where('dateTime', '<=', nextWeek),
         orderBy('dateTime', 'asc')
@@ -195,6 +165,7 @@ export default function BattlesCalendarView() {
       // Set up listener for upcoming battles
       const upcomingQuery = query(
         battlesRef,
+ where('status', '==', 'accepted'),
         where('dateTime', '>=', new Date()),
         orderBy('dateTime', 'asc')
       );
@@ -218,6 +189,7 @@ export default function BattlesCalendarView() {
       // Set up listener for all battles
       const allQuery = query(
         battlesRef,
+ where('status', '==', 'accepted'),
         orderBy('dateTime', 'desc'),
         limit(BATCH_SIZE)
       );

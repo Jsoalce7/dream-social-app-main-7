@@ -11,10 +11,12 @@ import {
   Timestamp,
   onSnapshot,
   orderBy,
+  limit,
   limit as firestoreLimit,
   startAfter,
   getDoc,
-  writeBatch
+  writeBatch,
+  setDoc
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from './use-auth';
@@ -59,9 +61,9 @@ export function useBattleRequests(): UseBattleRequestsResult {
       // First, try with the composite index query
       try {
         let q = query(
-          collection(db, 'battles'),
+          collection(db, 'battleRequests'),
           where('status', '==', 'pending'),
-          where('creatorBId', '==', currentUser.id),
+          where('receiverId', '==', currentUser.id),
           orderBy('dateTime', 'desc'),
           firestoreLimit(BATCH_SIZE)
         );
@@ -116,10 +118,10 @@ export function useBattleRequests(): UseBattleRequestsResult {
         
         // Fallback to client-side filtering if the composite index is missing
         const q = query(
-          collection(db, 'battles'),
+          collection(db, 'battleRequests'),
+          where('receiverId', '==', currentUser.id),
           where('status', '==', 'pending'),
-          where('creatorBId', '==', currentUser.id),
-          firestoreLimit(BATCH_SIZE * 10) // Get more documents to account for client-side filtering
+          firestoreLimit(BATCH_SIZE * 2)
         );
 
         const querySnapshot = await getDocs(q);
@@ -129,19 +131,27 @@ export function useBattleRequests(): UseBattleRequestsResult {
           return;
         }
 
-        let battles = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Battle[];
+        const newBattles = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            status: data.status || 'pending',
+            creatorAId: data.senderId,
+            creatorBId: data.receiverId,
+            creatorAName: data.senderName || 'Unknown User',
+            creatorBName: data.receiverName || 'Unknown User',
+            creatorAAvatar: data.senderAvatar || '',
+            creatorBAvatar: data.receiverAvatar || '',
+            dateTime: data.dateTime || new Date(),
+            mode: data.mode || 'standard',
+            createdAt: data.createdAt || new Date(),
+            updatedAt: data.updatedAt || new Date(),
+            ...data
+          };
+        }) as Battle[];
 
-        // Sort by dateTime on the client
-        battles = battles
-          .filter(battle => battle.status === 'pending')
-          .sort((a, b) => (b.dateTime?.toDate?.()?.getTime() || 0) - (a.dateTime?.toDate?.()?.getTime() || 0))
-          .slice(0, loadMore ? battleRequests.length + BATCH_SIZE : BATCH_SIZE);
-
-        setBattleRequests(battles);
-        setHasMore(battles.length === BATCH_SIZE);
+        setBattleRequests(newBattles);
+        setHasMore(newBattles.length === BATCH_SIZE);
       }
     } catch (err) {
       console.error('Error fetching battle requests:', err);
@@ -151,25 +161,181 @@ export function useBattleRequests(): UseBattleRequestsResult {
     }
   }, [currentUser?.id, lastVisible]);
 
+  // Debug function to log all battle requests
+  const logAllBattleRequests = async () => {
+    try {
+      console.log('🔍 DEBUG: Fetching ALL battleRequests...');
+      const allRequests = await getDocs(collection(db, 'battleRequests'));
+      
+      console.log(`🔍 DEBUG: Found ${allRequests.size} total battle requests`);
+      
+      allRequests.forEach(doc => {
+        const data = doc.data();
+        console.log(`📋 Document ${doc.id}:`, {
+          status: data.status,
+          receiverId: data.receiverId,
+          dateTime: data.dateTime?.toDate?.(),
+          dateTimeType: data.dateTime?.constructor?.name,
+          currentUserId: currentUser?.id,
+          matchesCurrentUser: data.receiverId === currentUser?.id,
+          isPending: data.status === 'pending'
+        });
+      });
+    } catch (err) {
+      console.error('❌ DEBUG: Error fetching battleRequests:', err);
+    }
+  };
+
   useEffect(() => {
-    fetchBattleRequests();
-  }, [fetchBattleRequests]);
+    console.log('🔍 useBattleRequests: Setting up effect');
+    console.log('🔍 useBattleRequests: currentUser =', currentUser);
+    console.log('🔍 useBattleRequests: currentUser?.id =', currentUser?.id, '(type:', typeof currentUser?.id + ')');
+    
+    // Log all battle requests for debugging
+    logAllBattleRequests();
+    
+    if (!currentUser?.id) {
+      console.log('⚠️ useBattleRequests: currentUser.id is undefined, skipping query setup');
+      return;
+    }
+
+    console.log('🔍 useBattleRequests: Setting up query with params:', {
+      collection: 'battleRequests',
+      status: 'pending',
+      receiverId: currentUser.id,
+      orderBy: 'dateTime',
+      limit: BATCH_SIZE
+    });
+
+    // Log the exact query being made
+    const queryConstraints = [
+      where('status', '==', 'pending'),
+      where('receiverId', '==', currentUser.id),
+      orderBy('dateTime', 'desc'),
+      limit(BATCH_SIZE)
+    ];
+    
+    console.log('🔍 DEBUG: Query constraints:', {
+      status: 'pending',
+      receiverId: currentUser.id,
+      receiverIdType: typeof currentUser.id,
+      orderBy: 'dateTime',
+      orderDirection: 'desc',
+      limit: BATCH_SIZE
+    });
+    
+    const q = query(collection(db, 'battleRequests'), ...queryConstraints);
+
+    console.log('🔍 useBattleRequests: Setting up onSnapshot listener...');
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        console.log('📡 useBattleRequests: Received snapshot update', {
+          timestamp: new Date().toISOString(),
+          size: snapshot.size,
+          empty: snapshot.empty,
+          docChanges: snapshot.docChanges().length
+        });
+
+        if (snapshot.empty) {
+          console.log('ℹ️ useBattleRequests: No documents found matching the query');
+          setBattleRequests([]);
+          return;
+        }
+
+        // Log each document's data and validate fields
+        const processedBattles = snapshot.docs.map(doc => {
+          const data = doc.data();
+          const battle = {
+            id: doc.id,
+            status: data.status || 'pending',
+            creatorAId: data.creatorAId || data.senderId,
+            creatorBId: data.creatorBId || data.receiverId,
+            creatorAName: data.creatorAName || data.senderName || 'Unknown User',
+            creatorBName: data.creatorBName || data.receiverName || 'Unknown User',
+            creatorAAvatar: data.creatorAAvatar || data.senderAvatar || '',
+            creatorBAvatar: data.creatorBAvatar || data.receiverAvatar || '',
+            dateTime: data.dateTime || new Date(),
+            mode: data.mode || 'standard',
+            createdAt: data.createdAt || new Date(),
+            updatedAt: data.updatedAt || new Date(),
+            ...data
+          };
+
+          // Log field validation
+          console.log(`📄 Document ${doc.id}:`, {
+            hasStatus: 'status' in data,
+            status: data.status,
+            hasReceiverId: 'receiverId' in data,
+            receiverId: data.receiverId,
+            hasDateTime: 'dateTime' in data,
+            dateTime: data.dateTime?.toDate?.(),
+            rawData: data
+          });
+
+          return battle;
+        }) as Battle[];
+
+        console.log(`✅ useBattleRequests: Processed ${processedBattles.length} battles`);
+        setBattleRequests(processedBattles);
+      },
+      (error) => {
+        console.error('❌ useBattleRequests: onSnapshot error:', {
+          code: error.code,
+          message: error.message,
+          details: error
+        });
+        setError('Failed to load battle requests');
+      }
+    );
+
+    // Cleanup function
+    return () => {
+      console.log('🧹 useBattleRequests: Cleaning up listener');
+      unsubscribe();
+    };
+  }, [currentUser?.id]);
 
   const updateBattleStatus = useCallback(async (battleId: string, status: 'accepted' | 'declined') => {
-    if (!currentUser?.id) return;
+    console.log(`🔄 updateBattleStatus: Starting for battle ${battleId} with status ${status}`);
+    if (!currentUser?.id) {
+      console.error('❌ updateBattleStatus: currentUser.id is undefined');
+      return;
+    }
 
     try {
-      const battleRef = doc(db, 'battles', battleId);
-      await updateDoc(battleRef, {
+      const battleRequestRef = doc(db, 'battleRequests', battleId);
+      await updateDoc(battleRequestRef, {
         status,
         updatedAt: Timestamp.now()
       });
-      
-      // Update local state
-      setBattleRequests(prev => 
-        prev.map(battle => 
-          battle.id === battleId 
-            ? { ...battle, status } 
+
+      // Also update the corresponding battle if it exists
+      const battleDoc = await getDoc(battleRequestRef);
+      const data = battleDoc.data();
+      if (data?.battleId) {
+        const actualBattleRef = doc(db, 'battles', data.battleId);
+        const battleSnap = await getDoc(actualBattleRef);
+
+        if (battleSnap.exists()) {
+          await updateDoc(actualBattleRef, {
+            status,
+            updatedAt: Timestamp.now()
+          });
+        } else if (status === 'accepted') {
+          await setDoc(actualBattleRef, {
+            ...data,
+            status,
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now()
+          });
+        }
+      }
+
+      setBattleRequests(prev =>
+        prev.map(battle =>
+          battle.id === battleId
+            ? { ...battle, status }
             : battle
         )
       );

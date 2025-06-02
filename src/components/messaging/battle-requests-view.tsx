@@ -192,7 +192,7 @@ export const BattleRequestsView = () => {
       setIsProcessing(prev => ({ ...prev, [battleId]: true }));
       await handleAccept(battleId);
       // Navigate to the battle page after accepting
-      router.push(`/battles/${battleId}`);
+      // router.push(`/battles/${battleId}`);
       toast({
         title: 'Battle Accepted',
         description: 'You have accepted the battle request.',
@@ -336,7 +336,7 @@ export const BattleRequestsView = () => {
                     setIsProcessing(prev => ({ ...prev, [request.id!]: true }));
                     if (handleAccept) {
                       await handleAccept(request.id);
-                      router.push(`/battles/${request.id}`);
+                      // router.push(`/battles/${request.id}`);
                     }
                     toast({
                       title: 'Battle Accepted',

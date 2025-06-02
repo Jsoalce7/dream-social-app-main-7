@@ -1,3 +1,5 @@
+'use client';
+
 import { Metadata } from 'next';
 import { BattleRequestsView } from '@/components/messaging/battle-requests-view';
 import { useBattleRequests } from '@/hooks/use-battle-requests';
