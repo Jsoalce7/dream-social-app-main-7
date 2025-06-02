@@ -82,7 +82,7 @@ export default function BattleCard({ battle, currentUserProfile }: BattleCardPro
       toast({ title: 'Success', description: `Battle request ${newStatus}.` });
     } catch (error) {
       console.error(`Error updating battle status to ${newStatus}:`, error);
-      toast({ title: 'Error', description: `Could not update battle status.`, variant: 'destructive' });
+      toast({ title: 'Error', description: 'Could not update battle status.', variant: 'destructive' });
     } finally {
       setIsUpdatingStatus(false);
     }
@@ -156,10 +156,12 @@ export default function BattleCard({ battle, currentUserProfile }: BattleCardPro
         </div>
         <div className="flex items-center text-sm">
           <ShieldHalf className="mr-2 h-4 w-4 text-primary" />
-          <Badge variant="secondary" className="text-xs">{mode}</Badge>
+          {mode && (
+            <Badge variant="secondary" className="text-xs">{mode}</Badge>
+          )}
         </div>
         <div className="flex items-center">
-          <Badge className={cn("text-xs font-semibold", getStatusColor(status))}>
+          <Badge variant="default" className={cn("text-xs font-semibold", getStatusColor(status))}>
             {status}
           </Badge>
         </div>
