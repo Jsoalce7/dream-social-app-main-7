@@ -166,5 +166,14 @@ service cloud.firestore {
 
       allow delete: if isAdmin();
     }
+
+    // battleRequests collection with limited scope to avoid overriding general access
+    match /battleRequests/{requestId} {
+      allow read: if isSignedIn() && resource.data.receiverId == request.auth.uid;
+      allow create: if isSignedIn() &&
+                       request.resource.data.receiverId is string &&
+                       request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if false;
+    }
   }
 }

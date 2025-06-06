@@ -6,7 +6,7 @@ import {
   query,
   where,
   getDocs,
-  doc,
+  doc, doc as firestoreDoc,
   updateDoc,
   Timestamp,
   onSnapshot,
@@ -36,6 +36,8 @@ export interface UseBattleRequestsResult {
   unreadCount?: number;
 }
 
+const BATCH_SIZE = 10; // Define a batch size for pagination
+
 export function useBattleRequests(): UseBattleRequestsResult {
   const { user: currentUser } = useAuth();
   const [battleRequests, setBattleRequests] = useState<Battle[]>([]);
@@ -43,28 +45,201 @@ export function useBattleRequests(): UseBattleRequestsResult {
   const [error, setError] = useState<string | null>(null);
   const [lastVisible, setLastVisible] = useState<any>(null);
   const [hasMore, setHasMore] = useState(true);
-  const BATCH_SIZE = 10;
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const fetchBattleRequests = useCallback(async (loadMore = false) => {
-    if (!currentUser?.id) {
-      setBattleRequests([]);
+    const userId = currentUser?.id;
+    if (!userId) {
       setIsLoading(false);
       return;
     }
 
+    setIsLoading(true);
+    setError(null);
+
+    console.log('🐛 useBattleRequests: Current User ID:', userId);
+
+    // First, try with the composite index query
     try {
-      if (!loadMore) {
-        setIsLoading(true);
-        setError(null);
+      let q = query(
+        collection(db, 'battleRequests'),
+        where('status', '==', 'pending'),
+        where('receiverId', '==', userId),
+        orderBy('createdAt', 'desc'), // Assuming you have a createdAt field for ordering
+        firestoreLimit(BATCH_SIZE)
+      );
+
+      if (loadMore && lastVisible) {
+        q = query(q, startAfter(lastVisible));
       }
 
-      // First, try with the composite index query
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        console.log('ℹ️ useBattleRequests: Composite index query returned empty snapshot.');
+        if (loadMore) {
+          setHasMore(false);
+        } else {
+          setBattleRequests([]);
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      console.log(`🐛 useBattleRequests: Composite index query returned ${querySnapshot.size} documents.`);
+      
+      // Log raw data before any processing
+      console.log('📋 Raw battle requests (before processing):', 
+        querySnapshot.docs.map(doc => ({
+          id: doc.id, 
+          ...doc.data(),
+          // Convert Firestore timestamp to string for better readability
+          createdAt: doc.data().createdAt?.toDate?.()?.toISOString()
+        }))
+      );
+
+      // Fetch related battle documents to get the dateTime and other details
+      const battleDocPromises = querySnapshot.docs.map(async doc => {
+        const data = doc.data();
+        console.log('🐛 useBattleRequests: Processing battleRequest document:', doc.id, 'with receiverId:', data.receiverId);
+        
+        try {
+          if (!data.battleId) {
+            console.warn('⚠️ Battle request is missing battleId:', doc.id);
+            return { doc, battleData: null, error: 'Missing battleId' };
+          }
+          
+          const battleDoc = await getDoc(firestoreDoc(db, 'battles', data.battleId));
+          if (!battleDoc.exists()) {
+            console.warn('⚠️ Battle document not found for battleId:', data.battleId);
+            return { doc, battleData: null, error: 'Battle not found' };
+          }
+          
+          return { doc, battleData: battleDoc.data(), error: null };
+        } catch (error) {
+          console.error('❌ Error fetching battle document:', error);
+          return { doc, battleData: null, error: error instanceof Error ? error.message : String(error) };
+        }
+      });
+
+      const battleResults = await Promise.all(battleDocPromises);
+
+      // Log all battle results for debugging
+      console.log('🔍 Battle document fetch results:', battleResults.map(({ doc, battleData: bd, error }) => ({
+        id: doc.id,
+        hasBattleData: !!bd,
+        error: error || null,
+        battleFields: bd ? Object.keys(bd) : []
+      })));
+
+      const newBattles = battleResults
+        .map(({ doc, battleData: battleDataResult, error }) => {
+          const requestData = doc.data();
+          const docId = doc.id;
+          
+          // Log the raw request data for debugging
+          console.log(`📝 Processing battle request ${docId}:`, {
+            ...requestData,
+            createdAt: requestData.createdAt?.toDate?.()?.toISOString()
+          });
+          
+          // Check required fields
+          const requiredFields = {
+            senderId: !!requestData.senderId,
+            receiverId: !!requestData.receiverId,
+            status: !!requestData.status,
+            battleId: !!requestData.battleId
+          };
+          
+          const hasAllRequiredFields = Object.values(requiredFields).every(Boolean);
+          
+          if (!hasAllRequiredFields) {
+            console.warn('⚠️ Skipping battle request - missing required fields:', {
+              docId,
+              missingFields: Object.entries(requiredFields)
+                .filter(([_, hasField]) => !hasField)
+                .map(([field]) => field),
+              requestData: {
+                ...requestData,
+                createdAt: requestData.createdAt?.toDate?.()?.toISOString()
+              }
+            });
+            return null;
+          }
+          
+          // Process valid battle request
+          try {
+            const battleData = battleDataResult || {};
+            
+            // Log battle data for debugging
+            console.log(`🏆 Battle data for ${docId}:`, {
+              hasBattleData: !!battleDataResult,
+              battleFields: battleData ? Object.keys(battleData) : []
+            });
+
+            // Build the battle object
+            const battle: Battle = {
+              id: docId,
+              battleId: requestData.battleId,
+              senderId: requestData.senderId,
+              senderName: requestData.senderName || 'Unknown Sender',
+              receiverId: requestData.receiverId,
+              receiverName: requestData.receiverName || 'Unknown Receiver',
+              creatorAName: requestData.senderName || 'Unknown Sender',
+              creatorBName: requestData.receiverName || 'Unknown Receiver',
+              creatorAAvatar: requestData.senderAvatar || '',
+              creatorBAvatar: requestData.receiverAvatar || '',
+              mode: requestData.mode || 'versus',
+              status: requestData.status,
+              creatorAId: requestData.creatorAId || requestData.senderId,
+              creatorBId: requestData.creatorBId || requestData.receiverId,
+              createdAt: requestData.createdAt?.toDate?.() || new Date(),
+              // Merge battle-specific data if available
+              ...battleData,
+              // Ensure dateTime is a Date object if it exists
+              dateTime: battleData?.dateTime?.toDate?.() || null
+            } as Battle;
+
+            console.log(`✅ Successfully processed battle request ${docId}`, battle);
+            return battle;
+            
+          } catch (error) {
+            console.error(`❌ Error processing battle request ${docId}:`, error);
+            return null;
+          }
+        })
+        .filter((battle): battle is Battle => battle !== null);
+
+      // Log the final processed battles
+      console.log('🏁 Processed battles:', {
+        count: newBattles.length,
+        battles: newBattles.map(b => ({
+          id: b.id,
+          battleId: b.battleId,
+          senderId: b.senderId,
+          receiverId: b.receiverId,
+          status: b.status
+        }))
+      });
+
+      setBattleRequests(newBattles);
+
+      const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
+      setLastVisible(lastDoc);
+      setHasMore(querySnapshot.docs.length === BATCH_SIZE);
+
+      return newBattles;
+
+    } catch (err: any) {
+      console.warn('⚠️ useBattleRequests: Composite index query failed, falling back to client-side filtering:', err);
+      // If the composite index query fails, fall back to a simpler query
+      // This might happen if the index is not created yet in Firestore
       try {
         let q = query(
           collection(db, 'battleRequests'),
+          where('receiverId', '==', userId),
           where('status', '==', 'pending'),
-          where('receiverId', '==', currentUser.id),
-          orderBy('dateTime', 'desc'),
+          orderBy('createdAt', 'desc'), // Assuming you have a createdAt field for ordering
           firestoreLimit(BATCH_SIZE)
         );
 
@@ -73,36 +248,64 @@ export function useBattleRequests(): UseBattleRequestsResult {
         }
 
         const querySnapshot = await getDocs(q);
-        
+
         if (querySnapshot.empty) {
+          console.log('ℹ️ useBattleRequests: Fallback query returned empty snapshot.');
           if (loadMore) {
             setHasMore(false);
           } else {
             setBattleRequests([]);
           }
+          setIsLoading(false);
           return;
         }
 
+         console.log(`🐛 useBattleRequests: Fallback query returned ${querySnapshot.size} documents.`);
 
-        const newBattles = querySnapshot.docs.map(doc => {
+         // Fetch related battle documents to get the dateTime and other details
+        const battleDocPromises = querySnapshot.docs.map(doc => {
           const data = doc.data();
-          // Ensure all required fields are present
-          return {
-            id: doc.id,
-            status: data.status || 'pending',
-            creatorAId: data.creatorAId,
-            creatorBId: data.creatorBId,
-            creatorAName: data.creatorAName || 'Unknown User',
-            creatorBName: data.creatorBName || 'Unknown User',
-            creatorAAvatar: data.creatorAAvatar,
-            creatorBAvatar: data.creatorBAvatar,
-            dateTime: data.dateTime || new Date(),
-            mode: data.mode || 'standard',
-            createdAt: data.createdAt || new Date(),
-            updatedAt: data.updatedAt || new Date(),
-            ...data
-          };
-        }) as Battle[];
+          console.log('🐛 useBattleRequests: Processing battleRequest document in fallback:', doc.id, 'with receiverId:', data.receiverId);
+          return getDoc(firestoreDoc(db, 'battles', data.battleId));
+        });
+
+        const battleDocs = await Promise.all(battleDocPromises);
+
+        const newBattles: Battle[] = querySnapshot.docs
+          .map((doc, index) => {
+            const requestData = doc.data();
+            const battleDoc = battleDocs[index];
+            let battleData: any = {};
+            
+            // Only check for required fields
+            if (!requestData.senderId || !requestData.receiverId || !requestData.status) {
+              console.warn('Skipping battle request with missing required fields:', doc.id, requestData);
+              return null;
+            }
+            
+            if (battleDoc && battleDoc.exists()) {
+              battleData = battleDoc.data();
+            }
+
+            return {
+              id: doc.id,
+              battleId: requestData.battleId,
+              senderId: requestData.senderId,
+              senderName: requestData.senderName,
+              receiverId: requestData.receiverId,
+              receiverName: requestData.receiverName,
+              creatorAId: requestData.creatorAId,
+              creatorBId: requestData.creatorBId,
+              status: requestData.status,
+              createdAt: requestData.createdAt?.toDate(), // Optional field
+              // Merge battle details
+              ...battleData,
+              dateTime: battleData?.dateTime?.toDate(), // Use dateTime from battles collection
+            };
+          })
+          .filter((battle): battle is Battle => battle !== null);
+          
+        console.log('✅ Final battleRequests array (fallback):', newBattles);
 
         if (loadMore) {
           setBattleRequests(prev => [...prev, ...newBattles]);
@@ -113,250 +316,97 @@ export function useBattleRequests(): UseBattleRequestsResult {
         const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
         setLastVisible(lastDoc);
         setHasMore(querySnapshot.docs.length === BATCH_SIZE);
-      } catch (err) {
-        console.warn('Composite index query failed, falling back to client-side filtering:', err);
-        
-        // Fallback to client-side filtering if the composite index is missing
-        const q = query(
-          collection(db, 'battleRequests'),
-          where('receiverId', '==', currentUser.id),
-          where('status', '==', 'pending'),
-          firestoreLimit(BATCH_SIZE * 2)
-        );
 
-        const querySnapshot = await getDocs(q);
-        
-        if (querySnapshot.empty) {
-          setBattleRequests([]);
-          return;
-        }
-
-        const newBattles = querySnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            status: data.status || 'pending',
-            creatorAId: data.senderId,
-            creatorBId: data.receiverId,
-            creatorAName: data.senderName || 'Unknown User',
-            creatorBName: data.receiverName || 'Unknown User',
-            creatorAAvatar: data.senderAvatar || '',
-            creatorBAvatar: data.receiverAvatar || '',
-            dateTime: data.dateTime || new Date(),
-            mode: data.mode || 'standard',
-            createdAt: data.createdAt || new Date(),
-            updatedAt: data.updatedAt || new Date(),
-            ...data
-          };
-        }) as Battle[];
-
-        setBattleRequests(newBattles);
-        setHasMore(newBattles.length === BATCH_SIZE);
+      } catch (fallbackErr: any) {
+        console.error('❌ useBattleRequests: Both composite index and fallback queries failed:', fallbackErr);
+        setError('Failed to fetch battle requests.');
+        setBattleRequests([]); // Clear requests on error
       }
-    } catch (err) {
-      console.error('Error fetching battle requests:', err);
-      setError('Failed to load battle requests. Please try again later.');
-    } finally {
-      setIsLoading(false);
     }
-  }, [currentUser?.id, lastVisible]);
+    setIsLoading(false);
+  }, [lastVisible]); // Removed currentUser from deps
 
-  // Debug function to log all battle requests
-  const logAllBattleRequests = async () => {
+  const acceptBattle = useCallback(async (battleId: string) => {
+    if (!currentUser) return;
     try {
-      console.log('🔍 DEBUG: Fetching ALL battleRequests...');
-      const allRequests = await getDocs(collection(db, 'battleRequests'));
-      
-      console.log(`🔍 DEBUG: Found ${allRequests.size} total battle requests`);
-      
-      allRequests.forEach(doc => {
-        const data = doc.data();
-        console.log(`📋 Document ${doc.id}:`, {
-          status: data.status,
-          receiverId: data.receiverId,
-          dateTime: data.dateTime?.toDate?.(),
-          dateTimeType: data.dateTime?.constructor?.name,
-          currentUserId: currentUser?.id,
-          matchesCurrentUser: data.receiverId === currentUser?.id,
-          isPending: data.status === 'pending'
-        });
-      });
-    } catch (err) {
-      console.error('❌ DEBUG: Error fetching battleRequests:', err);
+      const batch = writeBatch(db);
+      const requestRef = firestoreDoc(db, 'battleRequests', battleId);
+      const battleRef = firestoreDoc(db, 'battles', battleId);
+      batch.update(requestRef, { status: 'accepted' });
+      // Uncomment and modify the following line if you want to update the battle status
+      // batch.update(battleRef, { status: 'scheduled' });
+
+      await batch.commit();
+      console.log('✅ Battle request accepted:', battleId);
+    } catch (err: any) {
+      console.error('❌ Error accepting battle request:', err);
+      setError('Failed to accept battle request.');
     }
-  };
+  }, [currentUser]);
+
+  const declineBattle = useCallback(async (battleId: string) => {
+    if (!currentUser) return;
+    try {
+      const requestRef = firestoreDoc(db, 'battleRequests', battleId);
+      await updateDoc(requestRef, { status: 'declined' });
+      console.log('✅ Battle request declined:', battleId);
+    } catch (err: any) {
+      console.error('❌ Error declining battle request:', err);
+      setError('Failed to decline battle request.');
+    }
+  }, [currentUser]);
+
+  const loadMoreBattles = useCallback(async () => {
+    if (!hasMore || isLoading) return;
+    await fetchBattleRequests(true);
+  }, [hasMore, isLoading, fetchBattleRequests]);
 
   useEffect(() => {
-    console.log('🔍 useBattleRequests: Setting up effect');
-    console.log('🔍 useBattleRequests: currentUser =', currentUser);
-    console.log('🔍 useBattleRequests: currentUser?.id =', currentUser?.id, '(type:', typeof currentUser?.id + ')');
-    
-    // Log all battle requests for debugging
-    logAllBattleRequests();
-    
-    if (!currentUser?.id) {
-      console.log('⚠️ useBattleRequests: currentUser.id is undefined, skipping query setup');
-      return;
-    }
+    if (!currentUser?.id) return;
 
-    console.log('🔍 useBattleRequests: Setting up query with params:', {
-      collection: 'battleRequests',
-      status: 'pending',
-      receiverId: currentUser.id,
-      orderBy: 'dateTime',
-      limit: BATCH_SIZE
-    });
-
-    // Log the exact query being made
-    const queryConstraints = [
-      where('status', '==', 'pending'),
+    const q = query(
+      collection(db, 'battleRequests'),
       where('receiverId', '==', currentUser.id),
-      orderBy('dateTime', 'desc'),
-      limit(BATCH_SIZE)
-    ];
-    
-    console.log('🔍 DEBUG: Query constraints:', {
-      status: 'pending',
-      receiverId: currentUser.id,
-      receiverIdType: typeof currentUser.id,
-      orderBy: 'dateTime',
-      orderDirection: 'desc',
-      limit: BATCH_SIZE
-    });
-    
-    const q = query(collection(db, 'battleRequests'), ...queryConstraints);
+      where('status', '==', 'pending')
+    );
 
-    console.log('🔍 useBattleRequests: Setting up onSnapshot listener...');
-    const unsubscribe = onSnapshot(
-      q,
+    const unsubscribe = onSnapshot(q, 
       (snapshot) => {
-        console.log('📡 useBattleRequests: Received snapshot update', {
-          timestamp: new Date().toISOString(),
-          size: snapshot.size,
-          empty: snapshot.empty,
-          docChanges: snapshot.docChanges().length
-        });
-
-        if (snapshot.empty) {
-          console.log('ℹ️ useBattleRequests: No documents found matching the query');
-          setBattleRequests([]);
-          return;
-        }
-
-        // Log each document's data and validate fields
-        const processedBattles = snapshot.docs.map(doc => {
-          const data = doc.data();
-          const battle = {
-            id: doc.id,
-            status: data.status || 'pending',
-            creatorAId: data.creatorAId || data.senderId,
-            creatorBId: data.creatorBId || data.receiverId,
-            creatorAName: data.creatorAName || data.senderName || 'Unknown User',
-            creatorBName: data.creatorBName || data.receiverName || 'Unknown User',
-            creatorAAvatar: data.creatorAAvatar || data.senderAvatar || '',
-            creatorBAvatar: data.creatorBAvatar || data.receiverAvatar || '',
-            dateTime: data.dateTime || new Date(),
-            mode: data.mode || 'standard',
-            createdAt: data.createdAt || new Date(),
-            updatedAt: data.updatedAt || new Date(),
-            ...data
-          };
-
-          // Log field validation
-          console.log(`📄 Document ${doc.id}:`, {
-            hasStatus: 'status' in data,
-            status: data.status,
-            hasReceiverId: 'receiverId' in data,
-            receiverId: data.receiverId,
-            hasDateTime: 'dateTime' in data,
-            dateTime: data.dateTime?.toDate?.(),
-            rawData: data
-          });
-
-          return battle;
-        }) as Battle[];
-
-        console.log(`✅ useBattleRequests: Processed ${processedBattles.length} battles`);
-        setBattleRequests(processedBattles);
+        console.log('📡 useBattleRequests (unreadCount): Received snapshot update. Size:', snapshot.size);
+        setUnreadCount(snapshot.size);
       },
-      (error) => {
-        console.error('❌ useBattleRequests: onSnapshot error:', {
-          code: error.code,
-          message: error.message,
-          details: error
-        });
-        setError('Failed to load battle requests');
+      (err) => {
+        console.error('❌ useBattleRequests (unreadCount): Error listening for unread count:', err);
       }
     );
 
-    // Cleanup function
-    return () => {
-      console.log('🧹 useBattleRequests: Cleaning up listener');
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [currentUser?.id]);
 
-  const updateBattleStatus = useCallback(async (battleId: string, status: 'accepted' | 'declined') => {
-    console.log(`🔄 updateBattleStatus: Starting for battle ${battleId} with status ${status}`);
-    if (!currentUser?.id) {
-      console.error('❌ updateBattleStatus: currentUser.id is undefined');
-      return;
+  useEffect(() => {
+    if (currentUser?.id) {
+      fetchBattleRequests();
     }
+  }, [currentUser?.id, fetchBattleRequests]);
 
-    try {
-      const battleRequestRef = doc(db, 'battleRequests', battleId);
-      await updateDoc(battleRequestRef, {
-        status,
-        updatedAt: Timestamp.now()
+  useEffect(() => {
+    if (battleRequests.length > 0) {
+      console.log('🎯 Final battleRequests state:', {
+        count: battleRequests.length,
+        ids: battleRequests.map(r => r.id),
+        requests: battleRequests.map(r => ({
+          id: r.id,
+          battleId: r.battleId,
+          senderId: r.senderId,
+          receiverId: r.receiverId,
+          status: r.status,
+          hasBattleData: !!r.dateTime
+        }))
       });
-
-      // Also update the corresponding battle if it exists
-      const battleDoc = await getDoc(battleRequestRef);
-      const data = battleDoc.data();
-      if (data?.battleId) {
-        const actualBattleRef = doc(db, 'battles', data.battleId);
-        const battleSnap = await getDoc(actualBattleRef);
-
-        if (battleSnap.exists()) {
-          await updateDoc(actualBattleRef, {
-            status,
-            updatedAt: Timestamp.now()
-          });
-        } else if (status === 'accepted') {
-          await setDoc(actualBattleRef, {
-            ...data,
-            status,
-            createdAt: Timestamp.now(),
-            updatedAt: Timestamp.now()
-          });
-        }
-      }
-
-      setBattleRequests(prev =>
-        prev.map(battle =>
-          battle.id === battleId
-            ? { ...battle, status }
-            : battle
-        )
-      );
-    } catch (err) {
-      console.error(`Error ${status} battle:`, err);
-      throw new Error(`Failed to ${status} battle`);
+    } else {
+      console.log('ℹ️ battleRequests state is empty');
     }
-  }, [currentUser?.id]);
-
-  const acceptBattle = useCallback(async (battleId: string) => {
-    await updateBattleStatus(battleId, 'accepted');
-  }, [updateBattleStatus]);
-
-  const declineBattle = useCallback(async (battleId: string) => {
-    await updateBattleStatus(battleId, 'declined');
-  }, [updateBattleStatus]);
-
-  const loadMoreBattles = useCallback(async () => {
-    if (isLoading || !hasMore) return;
-    await fetchBattleRequests(true);
-  }, [fetchBattleRequests, hasMore, isLoading]);
+  }, [battleRequests]);
 
   return {
     battleRequests,
@@ -364,10 +414,12 @@ export function useBattleRequests(): UseBattleRequestsResult {
     error,
     acceptBattle,
     declineBattle,
-    onAccept: acceptBattle, // Alias for compatibility
-    onDecline: declineBattle, // Alias for compatibility
     loadMoreBattles,
     hasMore,
-    unreadCount: battleRequests.length, // Simple unread count
+    onAccept: acceptBattle,
+    onDecline: declineBattle,
+    unreadCount,
   };
-}
+};
+
+export default useBattleRequests;
