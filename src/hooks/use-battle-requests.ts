@@ -26,13 +26,13 @@ export interface UseBattleRequestsResult {
   battleRequests: Battle[];
   isLoading: boolean;
   error: string | null;
-  acceptBattle: (battleId: string) => Promise<void>;
-  declineBattle: (battleId: string) => Promise<void>;
+  acceptBattle: (requestDocId: string, battleId: string) => Promise<void>;
+  declineBattle: (requestDocId: string, battleId: string) => Promise<void>;
   loadMoreBattles: () => Promise<void>;
   hasMore: boolean;
   // For compatibility with existing components
-  onAccept?: (battleId: string) => Promise<void>;
-  onDecline?: (battleId: string) => Promise<void>;
+  onAccept?: (requestDocId: string, battleId: string) => Promise<void>;
+  onDecline?: (requestDocId: string, battleId: string) => Promise<void>;
   unreadCount?: number;
 }
 
@@ -276,11 +276,11 @@ export function useBattleRequests(): UseBattleRequestsResult {
     setIsLoading(false);
   }, [lastVisible]); // Removed currentUser from deps
 
-  const acceptBattle = useCallback(async (battleId: string) => {
+  const acceptBattle = useCallback(async (requestDocId: string, battleId: string) => {
     if (!currentUser) return;
     try {
       const batch = writeBatch(db);
-      const requestRef = firestoreDoc(db, 'battleRequests', battleId);
+      const requestRef = firestoreDoc(db, 'battleRequests', requestDocId);
       const battleRef = firestoreDoc(db, 'battles', battleId);
       batch.update(requestRef, { status: 'accepted' });
       // Uncomment and modify the following line if you want to update the battle status
@@ -293,10 +293,10 @@ export function useBattleRequests(): UseBattleRequestsResult {
     }
   }, [currentUser]);
 
-  const declineBattle = useCallback(async (battleId: string) => {
+  const declineBattle = useCallback(async (requestDocId: string, battleId: string) => {
     if (!currentUser) return;
     try {
-      const requestRef = firestoreDoc(db, 'battleRequests', battleId);
+      const requestRef = firestoreDoc(db, 'battleRequests', requestDocId);
       await updateDoc(requestRef, { status: 'declined' });
     } catch (err: any) {
       console.error('❌ Error declining battle request:', err);

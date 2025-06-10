@@ -17,17 +17,17 @@ interface BattleRequestsDialogProps {
 export default function BattleRequestsDialog({ open, onClose }: BattleRequestsDialogProps) {
   const { battleRequests, isLoading, error, acceptBattle, declineBattle } = useBattleRequests();
   
-  const handleAccept = async (battleId: string) => {
+  const handleAccept = async (requestId: string, battleId: string) => {
     try {
-      await acceptBattle(battleId);
+      await acceptBattle(requestId, battleId);
     } catch (error) {
       console.error("Error accepting battle:", error);
     }
   };
-  
-  const handleDecline = async (battleId: string) => {
+
+  const handleDecline = async (requestId: string, battleId: string) => {
     try {
-      await declineBattle(battleId);
+      await declineBattle(requestId, battleId);
     } catch (error) {
       console.error("Error declining battle:", error);
     }
@@ -87,13 +87,13 @@ export default function BattleRequestsDialog({ open, onClose }: BattleRequestsDi
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleDecline(battle.id)}
+                      onClick={() => handleDecline(battle.id, battle.battleId)}
                     >
                       Decline
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => handleAccept(battle.id)}
+                      onClick={() => handleAccept(battle.id, battle.battleId)}
                     >
                       Accept Challenge
                     </Button>

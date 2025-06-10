@@ -185,12 +185,12 @@ export const BattleRequestsView = () => {
     }
   }, [battleRequests]);
 
-  const handleAcceptBattle = async (battleId: string) => {
+  const handleAcceptBattle = async (requestId: string, battleId: string) => {
     if (!handleAccept) return;
     
     try {
-      setIsProcessing(prev => ({ ...prev, [battleId]: true }));
-      await handleAccept(battleId);
+      setIsProcessing(prev => ({ ...prev, [requestId]: true }));
+      await handleAccept(requestId, battleId);
       // Navigate to the battle page after accepting
       // router.push(`/battles/${battleId}`);
       toast({
@@ -206,7 +206,7 @@ export const BattleRequestsView = () => {
         variant: 'destructive',
       });
     } finally {
-      setIsProcessing(prev => ({ ...prev, [battleId]: false }));
+      setIsProcessing(prev => ({ ...prev, [requestId]: false }));
     }
   };
 
@@ -305,7 +305,7 @@ export const BattleRequestsView = () => {
                   try {
                     setIsProcessing(prev => ({ ...prev, [request.id!]: true }));
                     if (onDecline) {
-                      await onDecline(request.id);
+                      await onDecline(request.id, request.battleId);
                     }
                     toast({
                       title: 'Battle Declined',
@@ -335,7 +335,7 @@ export const BattleRequestsView = () => {
                   try {
                     setIsProcessing(prev => ({ ...prev, [request.id!]: true }));
                     if (handleAccept) {
-                      await handleAccept(request.id);
+                      await handleAccept(request.id, request.battleId);
                       // router.push(`/battles/${request.id}`);
                     }
                     toast({
