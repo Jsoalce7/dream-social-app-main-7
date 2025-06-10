@@ -114,6 +114,26 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Battle Requests collection for direct challenges
+    match /battleRequests/{requestId} {
+      allow read: if isSignedIn() &&
+        (request.auth.uid == resource.data.senderId ||
+         request.auth.uid == resource.data.receiverId);
+      allow create: if isSignedIn() &&
+        request.auth.uid == request.resource.data.senderId &&
+        request.resource.data.keys().hasAll(
+          ['senderId', 'receiverId', 'battleId', 'status', 'createdAt']
+        ) &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.createdAt == request.time;
+      allow update: if isSignedIn() &&
+        request.auth.uid == resource.data.receiverId &&
+        request.resource.data.keys().hasOnly(['status']) &&
+        (request.resource.data.status == 'accepted' ||
+         request.resource.data.status == 'declined');
+      allow delete: if isAdmin();
+    }
+
     // Battles collection (existing - structure maintained)
     match /battles/{battleId} {
       allow read: if isSignedIn() && ( isAdmin() || request.auth.uid == resource.data.creatorAId || request.auth.uid == resource.data.creatorBId );

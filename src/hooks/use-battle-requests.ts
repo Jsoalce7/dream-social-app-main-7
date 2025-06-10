@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   collection,
   query,
@@ -16,7 +16,8 @@ import {
   startAfter,
   getDoc,
   writeBatch,
-  setDoc
+  setDoc,
+  type Unsubscribe
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from './use-auth';
@@ -46,6 +47,7 @@ export function useBattleRequests(): UseBattleRequestsResult {
   const [lastVisible, setLastVisible] = useState<any>(null);
   const [hasMore, setHasMore] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const unreadUnsubscribeRef = useRef<Unsubscribe | null>(null);
 
   const fetchBattleRequests = useCallback(async (loadMore = false) => {
     const userId = currentUser?.id;
@@ -309,8 +311,24 @@ export function useBattleRequests(): UseBattleRequestsResult {
     await fetchBattleRequests(true);
   }, [hasMore, isLoading, fetchBattleRequests]);
 
+  // Reset requests when the user logs out
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!currentUser?.id) {
+      setBattleRequests([]);
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    // Clean up any previous listener
+    if (unreadUnsubscribeRef.current) {
+      unreadUnsubscribeRef.current();
+      unreadUnsubscribeRef.current = null;
+    }
+
+    if (!currentUser?.id) {
+      setUnreadCount(0);
+      return;
+    }
 
     const q = query(
       collection(db, 'battleRequests'),
@@ -318,7 +336,8 @@ export function useBattleRequests(): UseBattleRequestsResult {
       where('status', '==', 'pending')
     );
 
-    const unsubscribe = onSnapshot(q,
+    unreadUnsubscribeRef.current = onSnapshot(
+      q,
       (snapshot) => {
         setUnreadCount(snapshot.size);
       },
@@ -327,7 +346,12 @@ export function useBattleRequests(): UseBattleRequestsResult {
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      if (unreadUnsubscribeRef.current) {
+        unreadUnsubscribeRef.current();
+        unreadUnsubscribeRef.current = null;
+      }
+    };
   }, [currentUser?.id]);
 
   useEffect(() => {
