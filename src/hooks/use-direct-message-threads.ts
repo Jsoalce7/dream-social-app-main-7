@@ -45,14 +45,12 @@ export function useDirectMessageThreads(): UseDirectMessageThreadsResult {
       setLoadingThreads(false);
       setThreads([]);
       if (!authLoading && !currentUser?.id) {
-         // console.log("useDirectMessageThreads: User not authenticated, clearing threads.");
       }
       return;
     }
 
     setLoadingThreads(true);
     const threadsRef = collection(db, 'dmThreads');
-    console.log("currentUser.id from useAuth():", currentUser?.id);
     // The query needs to match the security rules which check if the user is a participant
     // Using array-contains ensures we only get threads where the current user is a participant
     const q = query(
