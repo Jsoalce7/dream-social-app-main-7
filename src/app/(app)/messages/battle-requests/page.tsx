@@ -15,7 +15,7 @@ export default function BattleRequestsThreadPage() {
 
   // Mark all battle requests as read when the component mounts
   useEffect(() => {
-    markAllAsRead();
+    void markAllAsRead();
   }, [markAllAsRead]);
 
   return (

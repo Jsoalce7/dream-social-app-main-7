@@ -34,6 +34,7 @@ export interface UseBattleRequestsResult {
   onAccept?: (battleId: string) => Promise<void>;
   onDecline?: (battleId: string) => Promise<void>;
   unreadCount?: number;
+  markAllAsRead: () => Promise<void>;
 }
 
 const BATCH_SIZE = 10; // Define a batch size for pagination
@@ -309,6 +310,34 @@ export function useBattleRequests(): UseBattleRequestsResult {
     await fetchBattleRequests(true);
   }, [hasMore, isLoading, fetchBattleRequests]);
 
+  const markAllAsRead = useCallback(async () => {
+    if (!currentUser?.id) {
+      setUnreadCount(0);
+      return;
+    }
+
+    try {
+      const q = query(
+        collection(db, 'battleRequests'),
+        where('receiverId', '==', currentUser.id),
+        where('status', '==', 'pending')
+      );
+
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const batch = writeBatch(db);
+        snapshot.forEach((docSnap) => {
+          batch.update(docSnap.ref, { isRead: true });
+        });
+        await batch.commit();
+      }
+
+      setUnreadCount(0);
+    } catch (err: any) {
+      console.error('❌ Error marking battle requests as read:', err);
+    }
+  }, [currentUser]);
+
   useEffect(() => {
     if (!currentUser?.id) return;
 
@@ -349,6 +378,7 @@ export function useBattleRequests(): UseBattleRequestsResult {
     acceptBattle,
     declineBattle,
     loadMoreBattles,
+    markAllAsRead,
     hasMore,
     onAccept: acceptBattle,
     onDecline: declineBattle,
