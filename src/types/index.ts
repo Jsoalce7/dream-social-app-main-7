@@ -24,8 +24,10 @@ export type BattleMode = 'Standard' | 'Duet' | 'Team' | 'Tournament';
 export type BattleRequestType = 'Direct' | 'Open';
 
 export interface Battle {
+  /** Firestore document ID of the battle request */
   id: string;
-  battleId: string; // Alias for id for compatibility
+  /** Firestore document ID of the actual battle */
+  battleId: string;
   creatorA?: UserProfile; // Made optional
   creatorB?: UserProfile; // Made optional
   creatorAId: string;
