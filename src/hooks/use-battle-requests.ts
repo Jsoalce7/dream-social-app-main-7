@@ -57,8 +57,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
     setIsLoading(true);
     setError(null);
 
-    console.log('🐛 useBattleRequests: Current User ID:', userId);
-
     // First, try with the composite index query
     try {
       let q = query(
@@ -76,7 +74,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
-        console.log('ℹ️ useBattleRequests: Composite index query returned empty snapshot.');
         if (loadMore) {
           setHasMore(false);
         } else {
@@ -86,22 +83,11 @@ export function useBattleRequests(): UseBattleRequestsResult {
         return;
       }
 
-      console.log(`🐛 useBattleRequests: Composite index query returned ${querySnapshot.size} documents.`);
-      
-      // Log raw data before any processing
-      console.log('📋 Raw battle requests (before processing):', 
-        querySnapshot.docs.map(doc => ({
-          id: doc.id, 
-          ...doc.data(),
-          // Convert Firestore timestamp to string for better readability
-          createdAt: doc.data().createdAt?.toDate?.()?.toISOString()
-        }))
-      );
+      // Process raw data
 
       // Fetch related battle documents to get the dateTime and other details
       const battleDocPromises = querySnapshot.docs.map(async doc => {
         const data = doc.data();
-        console.log('🐛 useBattleRequests: Processing battleRequest document:', doc.id, 'with receiverId:', data.receiverId);
         
         try {
           if (!data.battleId) {
@@ -124,24 +110,11 @@ export function useBattleRequests(): UseBattleRequestsResult {
 
       const battleResults = await Promise.all(battleDocPromises);
 
-      // Log all battle results for debugging
-      console.log('🔍 Battle document fetch results:', battleResults.map(({ doc, battleData: bd, error }) => ({
-        id: doc.id,
-        hasBattleData: !!bd,
-        error: error || null,
-        battleFields: bd ? Object.keys(bd) : []
-      })));
 
       const newBattles = battleResults
         .map(({ doc, battleData: battleDataResult, error }) => {
           const requestData = doc.data();
           const docId = doc.id;
-          
-          // Log the raw request data for debugging
-          console.log(`📝 Processing battle request ${docId}:`, {
-            ...requestData,
-            createdAt: requestData.createdAt?.toDate?.()?.toISOString()
-          });
           
           // Check required fields
           const requiredFields = {
@@ -171,11 +144,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
           try {
             const battleData = battleDataResult || {};
             
-            // Log battle data for debugging
-            console.log(`🏆 Battle data for ${docId}:`, {
-              hasBattleData: !!battleDataResult,
-              battleFields: battleData ? Object.keys(battleData) : []
-            });
 
             // Build the battle object
             const battle: Battle = {
@@ -200,7 +168,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
               dateTime: battleData?.dateTime?.toDate?.() || null
             } as Battle;
 
-            console.log(`✅ Successfully processed battle request ${docId}`, battle);
             return battle;
             
           } catch (error) {
@@ -211,17 +178,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
         .filter((battle): battle is Battle => battle !== null);
 
       // Log the final processed battles
-      console.log('🏁 Processed battles:', {
-        count: newBattles.length,
-        battles: newBattles.map(b => ({
-          id: b.id,
-          battleId: b.battleId,
-          senderId: b.senderId,
-          receiverId: b.receiverId,
-          status: b.status
-        }))
-      });
-
       setBattleRequests(newBattles);
 
       const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
@@ -250,7 +206,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
         const querySnapshot = await getDocs(q);
 
         if (querySnapshot.empty) {
-          console.log('ℹ️ useBattleRequests: Fallback query returned empty snapshot.');
           if (loadMore) {
             setHasMore(false);
           } else {
@@ -260,12 +215,9 @@ export function useBattleRequests(): UseBattleRequestsResult {
           return;
         }
 
-         console.log(`🐛 useBattleRequests: Fallback query returned ${querySnapshot.size} documents.`);
-
          // Fetch related battle documents to get the dateTime and other details
         const battleDocPromises = querySnapshot.docs.map(doc => {
           const data = doc.data();
-          console.log('🐛 useBattleRequests: Processing battleRequest document in fallback:', doc.id, 'with receiverId:', data.receiverId);
           return getDoc(firestoreDoc(db, 'battles', data.battleId));
         });
 
@@ -305,8 +257,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
           })
           .filter((battle): battle is Battle => battle !== null);
           
-        console.log('✅ Final battleRequests array (fallback):', newBattles);
-
         if (loadMore) {
           setBattleRequests(prev => [...prev, ...newBattles]);
         } else {
@@ -337,7 +287,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
       // batch.update(battleRef, { status: 'scheduled' });
 
       await batch.commit();
-      console.log('✅ Battle request accepted:', battleId);
     } catch (err: any) {
       console.error('❌ Error accepting battle request:', err);
       setError('Failed to accept battle request.');
@@ -349,7 +298,6 @@ export function useBattleRequests(): UseBattleRequestsResult {
     try {
       const requestRef = firestoreDoc(db, 'battleRequests', battleId);
       await updateDoc(requestRef, { status: 'declined' });
-      console.log('✅ Battle request declined:', battleId);
     } catch (err: any) {
       console.error('❌ Error declining battle request:', err);
       setError('Failed to decline battle request.');
@@ -370,9 +318,8 @@ export function useBattleRequests(): UseBattleRequestsResult {
       where('status', '==', 'pending')
     );
 
-    const unsubscribe = onSnapshot(q, 
+    const unsubscribe = onSnapshot(q,
       (snapshot) => {
-        console.log('📡 useBattleRequests (unreadCount): Received snapshot update. Size:', snapshot.size);
         setUnreadCount(snapshot.size);
       },
       (err) => {
@@ -391,20 +338,7 @@ export function useBattleRequests(): UseBattleRequestsResult {
 
   useEffect(() => {
     if (battleRequests.length > 0) {
-      console.log('🎯 Final battleRequests state:', {
-        count: battleRequests.length,
-        ids: battleRequests.map(r => r.id),
-        requests: battleRequests.map(r => ({
-          id: r.id,
-          battleId: r.battleId,
-          senderId: r.senderId,
-          receiverId: r.receiverId,
-          status: r.status,
-          hasBattleData: !!r.dateTime
-        }))
-      });
-    } else {
-      console.log('ℹ️ battleRequests state is empty');
+      // state updated
     }
   }, [battleRequests]);
 

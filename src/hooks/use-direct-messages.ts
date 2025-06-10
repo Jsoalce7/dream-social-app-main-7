@@ -130,7 +130,6 @@ export function useDirectMessages(threadId: string | null): UseDirectMessagesRes
       const safeContentType = contentType === 'text' || contentType === 'image' ? contentType : 'text';
       await sendDirectMessage(currentUser, threadId, content.trim(), safeContentType);
       
-      console.log("✅ Message sent successfully using utility function");
       
       // Update the thread document with the last message info and unread counts
       const threadRef = doc(db, 'dmThreads', threadId);

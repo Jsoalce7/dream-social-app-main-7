@@ -58,10 +58,6 @@ export async function createDirectMessageThread(
   // The participantIds array MUST match the order used in the thread ID
   const participantIds = uid1 < uid2 ? [uid1, uid2] : [uid2, uid1];
 
-  console.log("🔍 Creating thread with ID:", threadId);
-  console.log("🔍 Current user ID:", uid1);
-  console.log("🔍 Other user ID:", uid2);
-  console.log("🔍 Participant IDs (ordered):", participantIds);
 
   // Check if both users exist in the users collection
   const currentUserExists = await checkUserExists(uid1);
@@ -81,11 +77,9 @@ export async function createDirectMessageThread(
   const threadSnap = await getDocs(threadQuery);
   
   if (!threadSnap.empty) {
-    console.log("✅ Thread already exists with ID:", threadId);
     return threadId;
   }
 
-  console.log("❌ Thread does not exist, creating new thread with ID:", threadId);
   
   // Create participant profiles for the thread
   // This MUST be a map with user IDs as keys
@@ -117,12 +111,10 @@ export async function createDirectMessageThread(
   };
 
   // Log the exact data being sent
-  console.log("✅ Thread data keys:", Object.keys(threadData));
   
   try {
     // Create the thread document
     await setDoc(threadRef, threadData);
-    console.log("✅ Thread created successfully!");
     return threadId;
   } catch (error) {
     console.error("❌ Error creating thread:", error);
@@ -172,9 +164,6 @@ export async function sendDirectMessage(
     throw new Error("Could not determine receiver ID");
   }
 
-  console.log("📤 Sending message to thread:", threadId);
-  console.log("📤 Current user ID:", currentUser.id);
-  console.log("📤 Receiver ID:", receiverId);
 
   // Create message data exactly as required by security rules
   const messageData = {
@@ -192,12 +181,10 @@ export async function sendDirectMessage(
     }
   };
   
-  console.log("📤 Message data keys:", Object.keys(messageData));
 
   // Create the message document
   const messagesRef = collection(db, 'dmThreads', threadId, 'directMessages');
   const messageDoc = doc(messagesRef);
   await setDoc(messageDoc, messageData);
   
-  console.log("✅ Message sent successfully!");
 }

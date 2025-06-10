@@ -38,8 +38,6 @@ const NewChannelDialog = ({ onChannelCreated }: { onChannelCreated: () => void }
     e.preventDefault();
     if (!channelName.trim() || !currentUserProfile || !currentUserProfile.id) return;
 
-    // Log current user profile for debugging
-    console.log("Current user profile attempting channel creation:", JSON.stringify(currentUserProfile, null, 2));
 
     setIsLoading(true);
 

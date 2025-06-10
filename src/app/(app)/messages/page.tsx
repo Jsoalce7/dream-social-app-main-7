@@ -130,7 +130,6 @@ export default function MessagesPage() {
 
   const handleUserSelectedFromSearch = useCallback(async (otherUser: UserProfile) => {
     if (!currentUser) {
-      console.log('No current user, cannot create thread.');
       return;
     }
     try {
